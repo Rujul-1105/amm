@@ -17,6 +17,8 @@ pub enum AmmError {
     Underflow,
     #[msg("Zero balance")]
     ZeroBalance,
+    #[msg("Pool is locked")]
+    PoolLocked,
 }
 
 impl From<CurveError> for AmmError {
