@@ -1,3 +1,4 @@
+use crate::error::AmmError;
 use crate::state::Config;
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -10,6 +11,7 @@ use constant_product_curve::ConstantProduct;
 pub struct Withdraw<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
+
     pub mint_x: Account<'info, Mint>,
     pub mint_y: Account<'info, Mint>,
 
@@ -62,35 +64,13 @@ pub struct Withdraw<'info> {
         associated_token::authority = user,
     )]
     pub user_lp: Box<Account<'info, TokenAccount>>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
 impl<'info> Withdraw<'info> {
-    pub fn withdraw(&mut self, amount: u64) -> Result<()> {
-        // require!(!self.config.locked, AmmError::PoolLocked);
-        // require_neq!(amount,0,AmmError::InvalidAmount);
-
-        let amounts = ConstantProduct::xy_withdraw_amounts_from_l(
-            self.vault_x.amount,
-            self.vault_y.amount,
-            self.mint_lp.supply,
-            amount,
-            6,
-        )
-        .unwrap();
-
-        let (x, y) = (amounts.x, amounts.y);
-        // require!(x>= min_x, AmmError::SlippageExceeded);
-        // require!(y>= min_y, AmmError::SlippageExceeded);
-
-        self.burn_lp_tokens(amount)?;
-        self.withdraw_tokens(true, x)?;
-        self.withdraw_tokens(false, y)?;
-        Ok(())
-    }
-
     fn withdraw_tokens(&self, is_x: bool, amount: u64) -> Result<()> {
         let (from, to) = match is_x {
             true => (
@@ -110,14 +90,14 @@ impl<'info> Withdraw<'info> {
         };
         let cpi_program = self.token_program.key();
 
-        let seed_bytes = self.config.seed.to_le_bytes();
-        let seeds: &[&[u8]; 3] = &[b"config", seed_bytes.as_ref(), &[self.config.config_bump]];
+        let signer_seed: &[&[&[u8]]] = &[&[
+            b"config",
+            &self.config.seed.to_le_bytes(),
+            &[self.config.config_bump],
+        ]];
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seed);
 
-        let signer: &[&[&[u8]]] = &[&seeds[..]];
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
-
-        transfer(cpi_ctx, amount)?;
-        Ok(())
+        transfer(cpi_ctx, amount)
     }
 
     fn burn_lp_tokens(&self, amount: u64) -> Result<()> {
@@ -126,10 +106,34 @@ impl<'info> Withdraw<'info> {
             from: self.user_lp.to_account_info(),
             authority: self.user.to_account_info(),
         };
+
         let cpi_program = self.token_program.key();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
-        burn(cpi_ctx, amount)?;
+        burn(cpi_ctx, amount)
+    }
+
+    pub fn withdraw(&mut self, amount: u64, min_x: u64, min_y: u64) -> Result<()> {
+        require!(!self.config.locked, AmmError::PoolLocked);
+        require_neq!(amount, 0, AmmError::InvalidAmount);
+
+        let amounts = ConstantProduct::xy_withdraw_amounts_from_l(
+            self.vault_x.amount,
+            self.vault_y.amount,
+            self.mint_lp.supply,
+            amount,
+            6,
+        )
+        .unwrap();
+
+        let (x, y) = (amounts.x, amounts.y);
+        require!(x >= min_x, AmmError::SlippageLimitExceeded);
+        require!(y >= min_y, AmmError::SlippageLimitExceeded);
+
+        self.burn_lp_tokens(amount)?;
+        self.withdraw_tokens(true, x)?;
+        self.withdraw_tokens(false, y)?;
+
         Ok(())
     }
 }

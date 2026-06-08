@@ -1,5 +1,5 @@
 use crate::state::Config;
-use crate::error::*;
+use crate::error::AmmError;
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -12,6 +12,7 @@ use constant_product_curve::ConstantProduct;
 pub struct Deposit<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
+
     pub mint_x: Account<'info, Mint>,
     pub mint_y: Account<'info, Mint>,
 
@@ -19,7 +20,8 @@ pub struct Deposit<'info> {
         has_one = mint_x, 
         has_one = mint_y, 
         seeds = [b"config", config.seed.to_le_bytes().as_ref()], 
-        bump = config.config_bump)]
+        bump = config.config_bump
+    )]
     pub config: Account<'info, Config>,
 
     #[account(
@@ -58,27 +60,72 @@ pub struct Deposit<'info> {
     pub user_y: Box<Account<'info, TokenAccount>>,
 
     #[account(
-        init, 
+        init_if_needed, 
         payer = user,
         associated_token::mint = mint_lp,
         associated_token::authority = user,
     )]
     pub user_lp: Account<'info, TokenAccount>,
+    
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
-
+    
 }
 
 impl<'info> Deposit<'info> {
+    fn deposit_tokens(&self, is_x: bool, amount: u64) -> Result<()> {
+        let (from, to) = match is_x  {
+            true =>(
+                self.user_x.to_account_info(),
+                self.vault_x.to_account_info(),
+            ),
+            false => (
+                self.user_y.to_account_info(),
+                self.vault_y.to_account_info(),
+            )
+        };
+    
+        let cpi_program = self.token_program.key();
+        let cpi_accounts = Transfer {
+            from,
+            to,
+            authority: self.user.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        transfer(cpi_ctx, amount)
+    }
+    
+    fn mint_lp_tokens(&self, amount: u64) -> Result<()> {
+    
+        let cpi_program = self.token_program.key();
+    
+        let cpi_accounts = MintTo {
+            mint: self.mint_lp.to_account_info(),
+            to: self.user_lp.to_account_info(),
+            authority: self.config.to_account_info(),
+        };
+
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"config",
+            &self.config.seed.to_le_bytes(),
+            &[self.config.config_bump],
+        ]];
+        let ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+        
+        mint_to(ctx, amount)
+    }
+   
     pub fn deposit(
         &mut self, 
         amount: u64,
         max_x: u64,
         max_y: u64
+
     ) -> Result<()> {
-        // require!(!self.config.locked, AmmError::PoolLocked);
-        // require_neq!(amount, 0, AmmError::InvalidAmount);
+
+        require!(!self.config.locked, AmmError::PoolLocked);
+        require_neq!(amount, 0, AmmError::InvalidAmount);
 
         let (x, y) = if self.mint_lp.supply==0 && self.vault_x.amount==0 && self.vault_y.amount==0 {
             (max_x, max_y)
@@ -89,13 +136,13 @@ impl<'info> Deposit<'info> {
                  self.mint_lp.supply,
                  amount,
                  6,
-            ).unwrap();
+            )
+            .unwrap();
 
             require!(
                 amounts.x <= max_x && amounts.y <= max_y, 
                 AmmError::SlippageLimitExceeded
             );
-
 
             (amounts.x, amounts.y)
         };
@@ -107,55 +154,6 @@ impl<'info> Deposit<'info> {
         Ok(())
     }
 
-    fn deposit_tokens(&self, is_x: bool, amount: u64) -> Result<()> {
-        let (from, to) = match is_x  {
-            true =>(
-
-                self.user_x.to_account_info(),
-                self.vault_x.to_account_info(),
-            ),
-            false => (
-                self.user_y.to_account_info(),
-                self.vault_y.to_account_info(),
-            )
-        };
-
-        let cpi_program = self.token_program.key();
-        let cpi_accounts = Transfer {
-            from,
-            to,
-            authority: self.user.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        transfer(cpi_ctx, amount)
-    }
-
-    fn mint_lp_tokens(&self, amount: u64) -> Result<()> {
-
-        let cpi_program = self.token_program.key();
-
-        let cpi_accounts = MintTo {
-            mint: self.mint_lp.to_account_info(),
-            to: self.user_lp.to_account_info(),
-            authority: self.config.to_account_info(),
-        };
-
-    let seed_bytes = self.config.seed.to_le_bytes();
-    let seeds: &[&[u8]; 3] = &[
-        b"config",
-        seed_bytes.as_ref(),
-        &[self.config.config_bump],
-    ];
-
-    let signer: &[&[&[u8]]] = &[&seeds[..]];
-
-    let ctx = CpiContext::new_with_signer(
-        cpi_program,
-        cpi_accounts,
-        signer,
-    );
-    mint_to(ctx, amount)
-    }
 
 
 }

@@ -19,6 +19,8 @@ pub enum AmmError {
     ZeroBalance,
     #[msg("Pool is locked")]
     PoolLocked,
+    #[msg("InvalidAmount")]
+    InvalidAmount,
 }
 
 impl From<CurveError> for AmmError {

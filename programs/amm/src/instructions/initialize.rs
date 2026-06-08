@@ -11,13 +11,14 @@ use crate::state::Config;
 pub struct Initialize<'info> {
     #[account(mut)]
     pub intializer: Signer<'info>,
+
     pub mint_x: Account<'info, Mint>,
     pub mint_y: Account<'info, Mint>,
 
     #[account(
         init,
         payer = intializer,
-        seeds = [b"lp", config.key().as_ref()],
+        seeds = [b"lp", config.key().as_ref()], //beacuse we want the mint_lp to unique for each config, so we use config.key().as_ref()
         bump,
         mint::decimals = 6,
         mint::authority = config,
@@ -43,11 +44,12 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = intializer,
-        seeds = [b"config", seed.to_le_bytes().as_ref()],
+        seeds = [b"config", seed.to_le_bytes().as_ref()], // unique 
         bump,
         space = Config::DISCRIMINATOR.len() + Config::INIT_SPACE,
     )]
     pub config: Account<'info, Config>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,

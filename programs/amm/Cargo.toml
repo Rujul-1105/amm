@@ -21,7 +21,7 @@ custom-panic = []
 
 
 [dependencies]
-anchor-lang = "1.0.2"
+anchor-lang = {version = "1.0.2", features = ["init-if-needed"] }
 anchor-spl = "1.0.2"
 constant-product-curve = { git = "https://github.com/deanmlittle/constant-product-curve.git" }
 solana-pubkey = "4.2.0"
